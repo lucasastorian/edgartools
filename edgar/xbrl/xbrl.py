@@ -790,10 +790,13 @@ class XBRL:
                     except (ValueError, TypeError):
                         decimals[period_key] = 0  # Default if decimals can't be converted
 
+        # Infer period type for this element
+        period_type = self._infer_period_type(node.element_name, facts_by_period)
+
         # For dimensional statements with dimension data, handle the parent item specially
         if should_display_dimensions and dimensioned_facts:
             # Create parent line item with total values AND dimensional children
-            # This ensures users see both the total (e.g., Total Revenue = $25,500M) 
+            # This ensures users see both the total (e.g., Total Revenue = $25,500M)
             # and the dimensional breakdown (e.g., Auto Revenue = $19,878M, Energy = $3,014M)
             line_item = {
                 'concept': element_id,
@@ -807,7 +810,9 @@ class XBRL:
                 'is_abstract': False,  # Not abstract since it has values
                 'children': node.children,
                 'has_values': len(values) > 0,  # True if we have total values
-                'has_dimension_children': True  # Mark as having dimension children
+                'has_dimension_children': True,  # Mark as having dimension children
+                'period': period_type,
+                'axis': ''  # Parent item has no axis
             }
         else:
             # Non-dimensional case: Create normal line item with values
@@ -822,7 +827,9 @@ class XBRL:
                 'preferred_label': node.preferred_label,
                 'is_abstract': node.is_abstract,
                 'children': node.children,
-                'has_values': len(values) > 0  # Flag to indicate if we found values
+                'has_values': len(values) > 0,  # Flag to indicate if we found values
+                'period': period_type,
+                'axis': ''  # Non-dimensional items have no axis
             }
 
         # Add to result
@@ -875,18 +882,26 @@ class XBRL:
 
                 # Default to the full dimension key (e.g., "Region: Americas")
                 display_label = dim_key
+                axis_display = ''
+                axis_qnames = ''
 
                 # Try various member label formats based on dimension structure
                 if dim_metadata:
                     if len(dim_metadata) == 1:
                         # For single dimensions, just use the member label (e.g., "Americas")
                         display_label = dim_metadata[0]['member_label']
+                        axis_display = dim_metadata[0]['dimension_label']  # Axis name (e.g., "Product or Service")
+                        axis_qnames = f"{dim_metadata[0]['dimension']}={dim_metadata[0]['member']}"
                     else:
                         # For multiple dimensions, create a combined label with all member names
                         # (e.g., "Americas - iPhone")
                         member_labels = [info['member_label'] for info in dim_metadata if 'member_label' in info]
+                        dimension_labels = [info['dimension_label'] for info in dim_metadata if 'dimension_label' in info]
                         if member_labels:
                             display_label = " - ".join(member_labels)
+                        if dimension_labels:
+                            axis_display = " - ".join(dimension_labels)  # Axis names joined
+                        axis_qnames = " | ".join([f"{info['dimension']}={info['member']}" for info in dim_metadata])
 
                 # Create dimension line item
                 dim_line_item = {
@@ -903,7 +918,10 @@ class XBRL:
                     'children': [],
                     'has_values': len(dim_values) > 0,
                     'is_dimension': True,  # Mark as a dimension item
-                    'dimension_metadata': dim_metadata  # Store full dimension information
+                    'dimension_metadata': dim_metadata,  # Store full dimension information
+                    'period': period_type,  # Same period type as parent element
+                    'axis': axis_display,  # Human-readable axis (member labels)
+                    '_axis_qnames': axis_qnames  # Technical QNames for metadata
                 }
 
                 # Add to result
@@ -1036,6 +1054,30 @@ class XBRL:
                 relevant_facts[context_id] = wrapped_fact
 
         return relevant_facts
+
+    def _infer_period_type(self, element_name: str, facts_by_period: Dict[str, List]) -> str:
+        """
+        Get the period type (instant or duration) from the actual facts.
+
+        Args:
+            element_name: Name of the element
+            facts_by_period: Dictionary mapping period keys to lists of (context_id, wrapped_fact) tuples
+
+        Returns:
+            'instant', 'duration', or '' if element has no facts (e.g., abstract elements)
+        """
+        # Get period type from the first fact's context
+        for period_key, period_facts in facts_by_period.items():
+            if period_facts:
+                context_id, wrapped_fact = period_facts[0]
+                context = self.contexts.get(context_id)
+                if context and hasattr(context, 'period'):
+                    period_type = context.period.get('type')
+                    if period_type in ('instant', 'duration'):
+                        return period_type
+
+        # No facts found (likely an abstract/header element)
+        return ''
 
     def get_period_views(self, statement_type: str) -> List[Dict[str, Any]]:
         """

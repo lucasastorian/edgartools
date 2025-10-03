@@ -405,6 +405,8 @@ class RenderedStatement:
                 df_row['level'] = row.level
                 df_row['abstract'] = row.is_abstract
                 df_row['dimension'] = row.is_dimension
+                df_row['axis'] = row.metadata.get('axis', '')
+                df_row['period'] = row.metadata.get('period', '')
 
                 df_rows.append(df_row)
 
@@ -1475,7 +1477,10 @@ def render_statement(
                 'concept': item.get('concept', ''),
                 'has_values': item.get('has_values', False),
                 'children': item.get('children', []),
-                'dimension_metadata': item.get('dimension_metadata', {})
+                'dimension_metadata': item.get('dimension_metadata', {}),
+                'axis': item.get('axis', ''),
+                'period': item.get('period', ''),
+                '_axis_qnames': item.get('_axis_qnames', '')
             },
             is_abstract=item.get('is_abstract', False),
             is_dimension=item.get('is_dimension', False),
