@@ -657,6 +657,15 @@ class XBRL:
             from edgar.xbrl.deduplication_strategy import RevenueDeduplicator
             line_items = RevenueDeduplicator.deduplicate_statement_items(line_items)
 
+        # Filter out empty dimension member leaves (presentation tree scaffolding)
+        # These are just structural nodes; actual dimensional data comes from fact contexts
+        line_items = [
+            item for item in line_items
+            if not (item.get('name', '').endswith('Member')
+                    and not item.get('has_values', False)
+                    and not item.get('children'))
+        ]
+
         return line_items
 
     def _generate_line_items(self, element_id: str, nodes: Dict[str, PresentationNode],
