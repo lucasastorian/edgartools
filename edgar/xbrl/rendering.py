@@ -402,13 +402,28 @@ class RenderedStatement:
                         column_name = column_map[i]
                         df_row[column_name] = cell.value
 
-                df_row['level'] = row.level
+                df_row['tree_level'] = row.level  # Original tree depth
                 df_row['abstract'] = row.is_abstract
                 df_row['dimension'] = row.is_dimension
                 df_row['axis'] = row.metadata.get('axis', '')
+                df_row['member'] = row.metadata.get('member', '')
                 df_row['period'] = row.metadata.get('period', '')
 
                 df_rows.append(df_row)
+
+            # Normalize levels to start at 0 using stack-based approach
+            # This handles hidden ancestor nodes in the presentation tree
+            stack = []  # Stack of indices into df_rows
+            for i, df_row in enumerate(df_rows):
+                tree_level = df_row['tree_level']
+
+                # Pop stack while top has >= tree_level (we've moved up or sideways in tree)
+                while stack and df_rows[stack[-1]]['tree_level'] >= tree_level:
+                    stack.pop()
+
+                # Display level is the depth of visible parents
+                df_row['level'] = len(stack)
+                stack.append(i)
 
             return pd.DataFrame(df_rows)
         except ImportError:
@@ -1479,6 +1494,7 @@ def render_statement(
                 'children': item.get('children', []),
                 'dimension_metadata': item.get('dimension_metadata', {}),
                 'axis': item.get('axis', ''),
+                'member': item.get('member', ''),
                 'period': item.get('period', ''),
                 '_axis_qnames': item.get('_axis_qnames', '')
             },

@@ -812,7 +812,8 @@ class XBRL:
                 'has_values': len(values) > 0,  # True if we have total values
                 'has_dimension_children': True,  # Mark as having dimension children
                 'period': period_type,
-                'axis': ''  # Parent item has no axis
+                'axis': '',  # Parent item has no axis
+                'member': ''  # Parent item has no member
             }
         else:
             # Non-dimensional case: Create normal line item with values
@@ -829,7 +830,8 @@ class XBRL:
                 'children': node.children,
                 'has_values': len(values) > 0,  # Flag to indicate if we found values
                 'period': period_type,
-                'axis': ''  # Non-dimensional items have no axis
+                'axis': '',  # Non-dimensional items have no axis
+                'member': ''  # Non-dimensional items have no member
             }
 
         # Add to result
@@ -884,6 +886,7 @@ class XBRL:
                 display_label = dim_key
                 axis_display = ''
                 axis_qnames = ''
+                member_qname = ''
 
                 # Try various member label formats based on dimension structure
                 if dim_metadata:
@@ -891,16 +894,20 @@ class XBRL:
                         # For single dimensions, just use the member label (e.g., "Americas")
                         display_label = dim_metadata[0]['member_label']
                         axis_display = dim_metadata[0]['dimension_label']  # Axis name (e.g., "Product or Service")
+                        member_qname = dim_metadata[0]['member']  # Member QName
                         axis_qnames = f"{dim_metadata[0]['dimension']}={dim_metadata[0]['member']}"
                     else:
                         # For multiple dimensions, create a combined label with all member names
                         # (e.g., "Americas - iPhone")
                         member_labels = [info['member_label'] for info in dim_metadata if 'member_label' in info]
                         dimension_labels = [info['dimension_label'] for info in dim_metadata if 'dimension_label' in info]
+                        member_qnames = [info['member'] for info in dim_metadata if 'member' in info]
                         if member_labels:
                             display_label = " - ".join(member_labels)
                         if dimension_labels:
                             axis_display = " - ".join(dimension_labels)  # Axis names joined
+                        if member_qnames:
+                            member_qname = " | ".join(member_qnames)  # Member QNames joined
                         axis_qnames = " | ".join([f"{info['dimension']}={info['member']}" for info in dim_metadata])
 
                 # Create dimension line item
@@ -920,7 +927,8 @@ class XBRL:
                     'is_dimension': True,  # Mark as a dimension item
                     'dimension_metadata': dim_metadata,  # Store full dimension information
                     'period': period_type,  # Same period type as parent element
-                    'axis': axis_display,  # Human-readable axis (member labels)
+                    'axis': axis_display,  # Human-readable axis labels (e.g., "Product or Service")
+                    'member': member_qname,  # Member QName(s) (e.g., "aapl:iPhoneMember" or "aapl:iPhoneMember | aapl:AmericasMember")
                     '_axis_qnames': axis_qnames  # Technical QNames for metadata
                 }
 
