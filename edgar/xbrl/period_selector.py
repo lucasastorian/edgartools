@@ -360,10 +360,11 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
     MIN_FACTS_THRESHOLD = 10  # Minimum facts needed for a period to be considered viable
 
     # Define essential concepts by statement type
+    # These are regex patterns that will match against actual XBRL concept names
     essential_concepts = {
         'IncomeStatement': ['Revenue', 'NetIncome', 'OperatingIncome'],
         'BalanceSheet': ['Assets', 'Liabilities', 'Equity'],
-        'CashFlowStatement': ['OperatingCashFlow', 'InvestingCashFlow', 'FinancingCashFlow']
+        'CashFlowStatement': ['OperatingActivities', 'InvestingActivities', 'FinancingActivities']
     }
 
     required_concepts = essential_concepts.get(statement_type, [])
