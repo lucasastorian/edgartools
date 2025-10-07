@@ -369,26 +369,111 @@ class RenderedStatement:
         from edgar.richtools import rich_to_text
         return rich_to_text(self.__rich__(), width=150)
 
-    def to_dataframe(self) -> Any:
-        """Convert to a pandas DataFrame"""
+    def to_dataframe(self, current_period_only: bool = False) -> Any:
+        """Convert to a pandas DataFrame
+
+        Args:
+            current_period_only: If True, only include the period matching document_period_end_date
+
+        Returns:
+            DataFrame if pandas is available
+        """
         try:
 
             # Create rows for the DataFrame
             df_rows = []
 
-            # Create column map - use end_date from period data if available
+            # Filter periods if current_period_only is True
+            periods_to_include = self.header.periods
+            if current_period_only:
+                entity_info = self.metadata.get('entity_info', {})
+                doc_period_end = entity_info.get('document_period_end_date')
+                fiscal_period = entity_info.get('fiscal_period')
+
+                if doc_period_end:
+                    # Determine expected duration ranges based on fiscal period
+                    # Quarterly (Q1-Q4): prefer 3-month, fallback to YTD
+                    # Annual (FY): prefer 12-month only
+                    duration_ranges = {
+                        'Q1': [(83, 97)],                          # Q1: quarterly only
+                        'Q2': [(83, 97), (175, 190)],              # Q2: quarterly or semi-annual YTD
+                        'Q3': [(83, 97), (265, 285)],              # Q3: quarterly or 9-month YTD
+                        'Q4': [(83, 97)],                          # Q4: quarterly only
+                        'FY': [(355, 375)]                         # FY: annual only (12 months)
+                    }
+                    expected_ranges = duration_ranges.get(fiscal_period, [(83, 97)])
+                    is_annual = fiscal_period == 'FY'
+
+                    periods_to_include = []
+                    quarterly_candidates = []
+                    annual_candidates = []
+                    ytd_candidates = []
+
+                    for period in self.header.periods:
+                        if period.end_date != doc_period_end:
+                            continue
+
+                        # Instant periods: match on date only
+                        if not period.is_duration:
+                            periods_to_include.append(period)
+                            continue
+
+                        # Duration periods: match on date AND duration
+                        if period.start_date:
+                            duration_days = (parse_date(period.end_date) - parse_date(period.start_date)).days
+
+                            # Categorize by duration
+                            is_quarterly = 83 <= duration_days <= 97
+                            is_annual_period = 355 <= duration_days <= 375
+                            is_ytd = 150 <= duration_days <= 285
+
+                            for min_days, max_days in expected_ranges:
+                                if min_days <= duration_days <= max_days:
+                                    if is_annual_period:
+                                        annual_candidates.append(period)
+                                    elif is_quarterly:
+                                        quarterly_candidates.append(period)
+                                    elif is_ytd:
+                                        ytd_candidates.append(period)
+                                    break
+
+                    # Selection logic based on filing type
+                    if is_annual:
+                        # For annual reports (10-K): prefer 12-month periods only
+                        if annual_candidates:
+                            periods_to_include.extend(annual_candidates[:1])
+                    else:
+                        # For quarterly reports (10-Q): prefer 3-month, fallback to YTD
+                        if quarterly_candidates:
+                            periods_to_include.extend(quarterly_candidates[:1])
+                        elif ytd_candidates:
+                            periods_to_include.extend(ytd_candidates[:1])
+
+            # Create column map - use actual date ranges from period data
             column_map = {}
             for i, period in enumerate(self.header.periods):
-                # Use date strings as column names if available
-                if period.end_date:
-                    # Optional: add quarter info to column name
-                    if period.quarter:
-                        column_map[i] = f"{period.end_date} ({period.quarter})"
-                    else:
-                        column_map[i] = period.end_date
+                # Skip this period if not in filtered list
+                if current_period_only and period not in periods_to_include:
+                    continue
+
+                # Build column name from actual date range
+                if period.is_duration and period.start_date and period.end_date:
+                    # Duration period: always show full date range
+                    col_name = f"{period.start_date} - {period.end_date}"
+                elif period.end_date:
+                    # Instant period: just the date
+                    col_name = period.end_date
                 else:
                     # Fallback to the display label
-                    column_map[i] = self.header.columns[i]
+                    col_name = self.header.columns[i]
+                    column_map[i] = col_name
+                    continue
+
+                # Add fiscal period/year if available
+                if period.quarter:
+                    col_name = f"{col_name} ({period.quarter})"
+
+                column_map[i] = col_name
 
             for row in self.rows:
                 df_row = {
@@ -398,7 +483,7 @@ class RenderedStatement:
 
                 # Add cell values using date string column names where available
                 for i, cell in enumerate(row.cells):
-                    if i < len(self.header.periods):
+                    if i < len(self.header.periods) and i in column_map:
                         column_name = column_map[i]
                         df_row[column_name] = cell.value
 
@@ -426,7 +511,8 @@ class RenderedStatement:
                 df_row['level'] = len(stack)
                 stack.append(i)
 
-                # Remove internal tree_level - not needed in final DataFrame
+            # Remove internal tree_level from all rows - not needed in final DataFrame
+            for df_row in df_rows:
                 del df_row['_tree_level']
 
             return pd.DataFrame(df_rows)
@@ -709,17 +795,20 @@ def _format_period_labels(
                 is_duration = True
                 duration_days = (end_date_obj - start_date_obj).days
 
-                # Determine quarter number for quarterly periods
-                if 80 <= duration_days <= 100:  # Quarterly period
-                    month = end_date_obj.month
-                    if month <= 3 or month == 12:
-                        q_num = "Q1"
-                    elif month <= 6:
-                        q_num = "Q2"
-                    elif month <= 9:
-                        q_num = "Q3"
-                    else:
-                        q_num = "Q4"
+                # Determine fiscal period label using entity_info
+                # Only label if we can match with document_period_end_date
+                doc_period_end = entity_info.get('document_period_end_date')
+                fiscal_period = entity_info.get('fiscal_period')
+                fiscal_year = entity_info.get('fiscal_year')
+
+                # Match this period's end date with document_period_end_date
+                if doc_period_end and end_date_str == doc_period_end:
+                    # This is the reported period - use fiscal_period from entity_info
+                    if fiscal_period and fiscal_year:
+                        q_num = f"{fiscal_period} {fiscal_year}"
+                    elif fiscal_period:
+                        q_num = fiscal_period
+                # Don't infer periods for other dates
             except (ValueError, TypeError, IndexError):
                 pass
         # For instant periods, extract the date

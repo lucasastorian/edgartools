@@ -171,18 +171,20 @@ class Statement:
                      period_filter:str=None,
                      period_view:str=None,
                      standard:bool=True,
-                     include_dimensions:bool=True ) -> Any:
+                     include_dimensions:bool=True,
+                     current_period_only:bool=False) -> Any:
         """Convert statement to pandas DataFrame.
             period_filter: Optional period key to filter facts
             period_view: Optional name of a predefined period view
             standard: Whether to use standardized concept labels
             include_dimensions: Whether to include dimensional segment data
+            current_period_only: If True, only include the reported period (matches document_period_end_date)
 
         Returns:
             DataFrame if pandas is available, else None
         """
         rendered_statement:RenderedStatement = self.render(period_filter=period_filter, period_view=period_view, standard=standard, include_dimensions=include_dimensions)
-        return rendered_statement.to_dataframe()
+        return rendered_statement.to_dataframe(current_period_only=current_period_only)
 
     def _validate_statement(self, skip_concept_check: bool = False) -> None:
         """

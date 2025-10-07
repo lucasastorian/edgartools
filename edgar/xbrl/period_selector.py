@@ -356,6 +356,9 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
 
     This prevents selection of periods that exist in the taxonomy but have
     no meaningful financial facts (like the Alphabet 2019 case).
+
+    For quarterly filings, prefers 3-month periods but allows YTD fallback when
+    quarterly data isn't available (common for cash flow statements).
     """
     MIN_FACTS_THRESHOLD = 10  # Minimum facts needed for a period to be considered viable
 
@@ -369,6 +372,8 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
 
     required_concepts = essential_concepts.get(statement_type, [])
     periods_with_data = []
+    quarterly_periods_with_data = []
+    ytd_periods_with_data = []
 
     for period_key, period_label in candidate_periods:
         try:
@@ -390,6 +395,14 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
             # Require at least half the essential concepts to be present
             min_essential_required = max(1, len(required_concepts) // 2)
             if essential_concept_count >= min_essential_required:
+                # Determine if this is a quarterly or YTD period
+                is_quarterly = _is_quarterly_period(period_key)
+
+                if is_quarterly:
+                    quarterly_periods_with_data.append((period_key, period_label))
+                else:
+                    ytd_periods_with_data.append((period_key, period_label))
+
                 periods_with_data.append((period_key, period_label))
                 logger.debug("Period %s has sufficient data: %d facts, %d/%d essential concepts",
                            period_label, fact_count, essential_concept_count, len(required_concepts))
@@ -402,7 +415,33 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
             # If we can't check, include it to be safe
             periods_with_data.append((period_key, period_label))
 
-    return periods_with_data
+    # For quarterly filings: prefer quarterly periods, but allow YTD fallback
+    # This handles cases like cash flow statements that only report YTD
+    if quarterly_periods_with_data:
+        # We have quarterly data - return all periods with data
+        return periods_with_data
+    elif ytd_periods_with_data:
+        # No quarterly data, but we have YTD - use YTD as fallback
+        logger.debug("No quarterly periods with data found, using YTD periods as fallback")
+        return ytd_periods_with_data
+    else:
+        # No periods passed the data check
+        return periods_with_data
+
+
+def _is_quarterly_period(period_key: str) -> bool:
+    """Check if a period key represents a quarterly period (80-100 days)."""
+    try:
+        if period_key.startswith('duration_'):
+            parts = period_key.split('_')
+            if len(parts) >= 3:
+                start_date = datetime.strptime(parts[1], '%Y-%m-%d').date()
+                end_date = datetime.strptime(parts[2], '%Y-%m-%d').date()
+                duration_days = (end_date - start_date).days
+                return 80 <= duration_days <= 100
+    except (ValueError, TypeError, IndexError):
+        pass
+    return False
 
 
 # Legacy compatibility functions - to be removed after migration

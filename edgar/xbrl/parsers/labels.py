@@ -10,6 +10,7 @@ from typing import Dict, Union
 
 from lxml import etree as ET
 
+from edgar.core import log
 from edgar.xbrl.core import STANDARD_LABEL, extract_element_id
 from edgar.xbrl.models import ElementCatalog, XBRLProcessingError
 from .base import BaseParser
@@ -128,10 +129,14 @@ class LabelsParser(BaseParser):
                         catalog_entry.labels.update(element_labels)
                     else:
                         # Create placeholder in catalog
+                        # Infer abstract flag from naming convention (elements ending in "Abstract" are abstract)
+                        is_abstract = element_id.endswith('Abstract')
+
                         self.element_catalog[element_id] = ElementCatalog(
                             name=element_id,
                             data_type="",
                             period_type="duration",
+                            abstract=is_abstract,
                             labels=element_labels
                         )
 
