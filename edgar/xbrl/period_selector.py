@@ -393,8 +393,12 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
                     essential_concept_count += 1
 
             # Require at least half the essential concepts to be present
+            # OR if the period has many facts (>100), include it anyway (likely IFRS/foreign taxonomy)
             min_essential_required = max(1, len(required_concepts) // 2)
-            if essential_concept_count >= min_essential_required:
+            has_sufficient_concepts = essential_concept_count >= min_essential_required
+            has_many_facts = fact_count > 100  # Likely valid period with different taxonomy
+
+            if has_sufficient_concepts or has_many_facts:
                 # Determine if this is a quarterly or YTD period
                 is_quarterly = _is_quarterly_period(period_key)
 
@@ -404,11 +408,16 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
                     ytd_periods_with_data.append((period_key, period_label))
 
                 periods_with_data.append((period_key, period_label))
-                logger.debug("Period %s has sufficient data: %d facts, %d/%d essential concepts",
-                           period_label, fact_count, essential_concept_count, len(required_concepts))
+
+                if has_many_facts and not has_sufficient_concepts:
+                    logger.debug("Period %s has many facts (%d) but different taxonomy - including anyway",
+                               period_label, fact_count)
+                else:
+                    logger.debug("Period %s has sufficient data: %d facts, %d/%d essential concepts",
+                               period_label, fact_count, essential_concept_count, len(required_concepts))
             else:
-                logger.debug("Period %s lacks essential concepts: %d/%d present",
-                           period_label, essential_concept_count, len(required_concepts))
+                logger.debug("Period %s lacks essential concepts: %d/%d present, only %d facts",
+                           period_label, essential_concept_count, len(required_concepts), fact_count)
 
         except Exception as e:
             logger.debug("Error checking data for period %s: %s", period_label, e)

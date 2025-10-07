@@ -109,7 +109,8 @@ statement_registry = {
         role_patterns=[
             r".*[Bb]alance[Ss]heet.*",
             r".*[Ss]tatement[Oo]f[Ff]inancial[Pp]osition.*",
-            r".*StatementConsolidatedBalanceSheets.*"
+            r".*StatementConsolidatedBalanceSheets.*",
+            r".*StatementOfFinancialPositionCurrentNonCurrent.*"  # IFRS format
         ],
         title="Consolidated Balance Sheets",
         supports_parenthetical=True,
@@ -138,7 +139,9 @@ statement_registry = {
             r".*[Ii]ncome[Ss]tatement.*",
             r".*[Ss]tatement[Oo]f[Ii]ncome.*",
             r".*[Oo]perations.*",
-            r".*StatementConsolidatedStatementsOfIncome.*"
+            r".*StatementConsolidatedStatementsOfIncome.*",
+            r".*StatementOfComprehensiveIncome.*",  # IFRS comprehensive income
+            r".*ComprehensiveIncomeProfitOrLoss.*"  # IFRS profit or loss
         ],
         title="Consolidated Statement of Income",
         supports_parenthetical=True,
@@ -165,7 +168,9 @@ statement_registry = {
         role_patterns=[
             r".*[Cc]ash[Ff]low.*",
             r".*[Ss]tatement[Oo]f[Cc]ash[Ff]lows.*",
-            r".*StatementConsolidatedStatementsOfCashFlows.*"
+            r".*StatementConsolidatedStatementsOfCashFlows.*",
+            r".*StatementOfCashFlowsDirectMethod.*",  # IFRS direct method
+            r".*StatementOfCashFlowsIndirectMethod.*"  # IFRS indirect method
         ],
         title="Consolidated Statement of Cash Flows",
         supports_parenthetical=False
