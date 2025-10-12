@@ -1,3 +1,4 @@
+import asyncio
 import re
 import zipfile
 from collections import defaultdict
@@ -9,7 +10,8 @@ if TYPE_CHECKING:
     from edgar._filings import Filing
 
 from edgar.attachments import Attachment, Attachments, get_document_type
-from edgar.httprequests import stream_with_retry
+from edgar.httpclient import async_http_client
+from edgar.httprequests import download_file_async, stream_with_retry
 from edgar.sgml.filing_summary import FilingSummary
 from edgar.sgml.sgml_header import FilingHeader
 from edgar.sgml.sgml_parser import SGMLDocument, SGMLFormatType, SGMLParser
@@ -100,6 +102,39 @@ def read_content_as_string(source: Union[str, Path]) -> str:
             lines.append(line)
 
     return ''.join(lines)
+
+
+async def read_content_as_string_async(source: Union[str, Path]) -> str:
+    """
+    Async version of read_content_as_string for non-blocking I/O.
+
+    Args:
+        source: Either a URL string or a file path
+
+    Returns:
+        str: Full content as string
+
+    Raises:
+        TooManyRequestsError: If the server returns a 429 response
+        FileNotFoundError: If file path doesn't exist
+    """
+    # URL: true async download via global HTTP_MGR (rate-limited, cached)
+    if isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
+        async with async_http_client() as client:
+            return await download_file_async(client, source, as_text=True)
+
+    # Local file path: keep event loop non-blocking with asyncio.to_thread
+    path = Path(source)
+
+    if str(path).endswith(".gz"):
+        import gzip
+        return await asyncio.to_thread(
+            lambda: gzip.open(path, "rt", encoding="utf-8", errors="replace").read()
+        )
+
+    return await asyncio.to_thread(
+        lambda: path.read_text(encoding="utf-8", errors="replace")
+    )
 
 
 def iter_documents(source: Union[str, Path]) -> Iterator[SGMLDocument]:
@@ -447,6 +482,38 @@ class FilingSGML:
     def from_filing(cls, filing: 'Filing') -> 'FilingSGML':
         """Create from a Filing object that provides text_url."""
         filing_sgml = cls.from_source(filing.text_url)
+        if not filing_sgml.accession_number:
+            filing_sgml.header.filing_metadata.update('ACCESSION NUMBER', filing.accession_no)
+        if not filing_sgml.header.filing_metadata.get("CIK"):
+            filing_sgml.header.filing_metadata.update('CIK', str(filing.cik).zfill(10))
+        if not filing_sgml.header.form:
+            filing_sgml.header.filing_metadata.update("CONFORMED SUBMISSION TYPE", filing.form)
+        return filing_sgml
+
+    @classmethod
+    async def from_source_async(cls, source: Union[str, Path]) -> "FilingSGML":
+        """
+        Async version of from_source() for non-blocking I/O.
+        Create FilingSGML instance from either a URL or file path.
+
+        Args:
+            source: Either a URL string or a file path
+
+        Returns:
+            FilingSGML: New instance with parsed header and documents
+
+        Raises:
+            ValueError: If header section cannot be found
+            IOError: If file cannot be read
+        """
+        content = await read_content_as_string_async(source)
+        header, documents = parse_submission_text(content)
+        return cls(header=header, documents=documents)
+
+    @classmethod
+    async def from_filing_async(cls, filing: 'Filing') -> 'FilingSGML':
+        """Async version of from_filing() for non-blocking I/O."""
+        filing_sgml = await cls.from_source_async(filing.text_url)
         if not filing_sgml.accession_number:
             filing_sgml.header.filing_metadata.update('ACCESSION NUMBER', filing.accession_no)
         if not filing_sgml.header.filing_metadata.get("CIK"):

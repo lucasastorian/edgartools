@@ -1,3 +1,4 @@
+import asyncio
 import itertools
 import json
 import pickle
@@ -1472,6 +1473,24 @@ class Filing:
             self._sgml = FilingSGML.from_filing(self)
         return self._sgml
 
+    async def sgml_async(self) -> FilingSGML:
+        """
+        Async version of sgml() for non-blocking I/O.
+        Uses async HTTP client for network downloads.
+        """
+        if self._sgml is not None:
+            return self._sgml
+
+        # Check local storage first
+        if is_using_local_storage():
+            local_path = local_filing_path(str(self.filing_date), self.accession_no)
+            if local_path.exists():
+                self._sgml = await FilingSGML.from_source_async(local_path)
+                return self._sgml
+
+        self._sgml = await FilingSGML.from_filing_async(self)
+        return self._sgml
+
     @cached_property
     def reports(self)  -> Optional[Reports]:
         """
@@ -2003,3 +2022,31 @@ def unicode_for_form(form: str) -> str:
 
     # Default case - generic document
     return '📄'
+
+
+async def load_sgmls_concurrently(filings: List[Filing], max_in_flight: int = 32) -> List[FilingSGML]:
+    """
+    Load SGML data for multiple filings concurrently with async I/O.
+
+    Uses a semaphore to cap concurrent downloads while the global rate limiter
+    enforces SEC's 9 req/sec limit.
+
+    Args:
+        filings: List of Filing objects to load
+        max_in_flight: Maximum number of concurrent downloads (default 32)
+                      Higher values increase memory usage (5-20MB per filing)
+
+    Returns:
+        List of FilingSGML objects in the same order as input filings
+
+    Example:
+        >>> filings = list(get_filings(ticker="AAPL", form="10-K"))[:100]
+        >>> sgmls = await load_sgmls_concurrently(filings, max_in_flight=32)
+    """
+    sem = asyncio.Semaphore(max_in_flight)
+
+    async def _load_with_semaphore(filing: Filing) -> FilingSGML:
+        async with sem:
+            return await filing.sgml_async()
+
+    return await asyncio.gather(*(_load_with_semaphore(f) for f in filings))

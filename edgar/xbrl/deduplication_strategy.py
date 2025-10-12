@@ -118,10 +118,18 @@ class RevenueDeduplicator:
             True if these items are revenue duplicates
         """
         revenue_count = 0
+        has_parent_with_dimension_children = False
 
         for _, item in indexed_items:
             if cls._is_revenue_concept(item):
                 revenue_count += 1
+                # Check if this is a parent row with dimensional children
+                if item.get('has_dimension_children', False) and not item.get('is_dimension', False):
+                    has_parent_with_dimension_children = True
+
+        # Don't treat parent rows with dimension children as duplicates of their dimensional breakdowns
+        if has_parent_with_dimension_children:
+            return False
 
         # If we have multiple revenue concepts, they're potential duplicates
         return revenue_count > 1

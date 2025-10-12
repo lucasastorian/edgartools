@@ -795,6 +795,29 @@ class XBRL:
 
         # For dimensional statements with dimension data, handle the parent item specially
         if should_display_dimensions and dimensioned_facts:
+            # If we don't have non-dimensional values, compute totals from dimensional facts
+            # This handles cases where ALL facts (including totals) have dimensions
+            if not values:
+                # Calculate totals by summing dimensional values per period
+                from collections import defaultdict
+                totals_by_period = defaultdict(lambda: 0)
+                for dim_facts_list in dimensioned_facts.values():
+                    for period_key, fact, _ in dim_facts_list:
+                        value = fact.numeric_value if fact.numeric_value is not None else fact.value
+                        if value is not None and isinstance(value, (int, float)):
+                            totals_by_period[period_key] += value
+                            # Store decimals from first fact we see for each period
+                            if period_key not in decimals and fact.decimals is not None:
+                                try:
+                                    if fact.decimals == 'INF':
+                                        decimals[period_key] = 0
+                                    else:
+                                        decimals[period_key] = int(fact.decimals)
+                                except (ValueError, TypeError):
+                                    decimals[period_key] = 0
+                # Use computed totals
+                values = dict(totals_by_period)
+
             # Create parent line item with total values AND dimensional children
             # This ensures users see both the total (e.g., Total Revenue = $25,500M)
             # and the dimensional breakdown (e.g., Auto Revenue = $19,878M, Energy = $3,014M)
