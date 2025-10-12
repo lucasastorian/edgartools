@@ -657,6 +657,25 @@ class XBRL:
             from edgar.xbrl.deduplication_strategy import RevenueDeduplicator
             line_items = RevenueDeduplicator.deduplicate_statement_items(line_items)
 
+        # Deduplicate items with same concept and values (common in cash flow statements)
+        # where the same element appears multiple times in the presentation tree
+        seen_items = {}
+        deduplicated_items = []
+        for item in line_items:
+            # Create a key based on concept, values, and whether it's dimensional
+            concept = item.get('concept', '')
+            values_tuple = tuple(sorted(item.get('values', {}).items()))
+            is_dimension = item.get('is_dimension', False)
+
+            dedup_key = (concept, values_tuple, is_dimension)
+
+            # Only add if we haven't seen this exact item before
+            if dedup_key not in seen_items:
+                seen_items[dedup_key] = True
+                deduplicated_items.append(item)
+
+        line_items = deduplicated_items
+
         # Filter out empty dimension member leaves (presentation tree scaffolding)
         # These are just structural nodes; actual dimensional data comes from fact contexts
         line_items = [
@@ -721,6 +740,42 @@ class XBRL:
             # Add this fact to the period
             facts_by_period[period_key].append((context_id, wrapped_fact))
 
+        # MERGE instant facts into duration periods when instant date == duration end date
+        # This allows cash balances (instant) to appear in cash flow statement (duration) columns
+        #
+        # Two scenarios:
+        # 1. Concept has both instant and duration facts -> merge instant into existing duration
+        # 2. Concept has only instant facts -> create duration entries from corresponding instant facts
+
+        # First, try to merge instant facts into existing duration periods
+        duration_periods = [k for k in facts_by_period.keys() if k.startswith('duration_')]
+        for duration_key in duration_periods:
+            # Extract end date from duration key: "duration_2025-01-27_2025-07-27" -> "2025-07-27"
+            parts = duration_key.split('_')
+            if len(parts) >= 3:
+                end_date = parts[2]
+                instant_key = f"instant_{end_date}"
+
+                # If we have instant facts at the end date, merge them into the duration period
+                if instant_key in facts_by_period:
+                    facts_by_period[duration_key].extend(facts_by_period[instant_key])
+
+        # Second, for instant-only concepts, map instant facts to duration periods
+        # by finding any duration periods that end on the instant date
+        instant_periods = [k for k in facts_by_period.keys() if k.startswith('instant_')]
+        for instant_key in instant_periods:
+            # Extract date from instant key: "instant_2025-07-27" -> "2025-07-27"
+            instant_date = instant_key.replace('instant_', '')
+
+            # Look for any period (even from other facts) that ends on this date
+            for period_key_str in self.context_period_map.values():
+                if period_key_str.startswith('duration_') and period_key_str.endswith(f"_{instant_date}"):
+                    # Create duration entry if it doesn't exist
+                    if period_key_str not in facts_by_period:
+                        facts_by_period[period_key_str] = []
+                    # Add instant facts to this duration period
+                    facts_by_period[period_key_str].extend(facts_by_period[instant_key])
+
         # should_display_dimensions is now passed as a parameter from the calling method
 
         # Process facts by period, with different handling based on statement type
@@ -728,6 +783,9 @@ class XBRL:
         dimensioned_facts = defaultdict(list)  # For dimensioned statement types
 
         for period_key, period_facts in facts_by_period.items():
+            # Skip instant periods - they were already merged into duration periods above
+            if period_key.startswith('instant_'):
+                continue
             if should_display_dimensions:
                 # For statements that should display dimensions, group facts by dimension
                 for context_id, wrapped_fact in period_facts:

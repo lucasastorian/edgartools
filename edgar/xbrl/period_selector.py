@@ -426,6 +426,15 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
 
     # For quarterly filings: prefer quarterly periods, but allow YTD fallback
     # This handles cases like cash flow statements that only report YTD
+
+    # SPECIAL CASE: Cash flow statements typically only report YTD in 10-Q filings
+    # If we have both quarterly and YTD, prefer YTD for cash flows (standard practice)
+    # Note: Instant period facts (beginning/ending cash) will be merged into duration
+    # columns during rendering - they don't need separate columns
+    if statement_type == 'CashFlowStatement' and ytd_periods_with_data:
+        logger.debug("Cash flow statement: using YTD periods (standard for quarterly filings)")
+        return ytd_periods_with_data
+
     if quarterly_periods_with_data:
         # We have quarterly data - return all periods with data
         return periods_with_data
