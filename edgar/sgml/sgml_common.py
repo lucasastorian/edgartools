@@ -6,6 +6,8 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, DefaultDict, Dict, Iterator, List, Optional, Tuple, Union
 
+import httpx
+
 if TYPE_CHECKING:
     from edgar._filings import Filing
 
@@ -120,7 +122,10 @@ async def read_content_as_string_async(source: Union[str, Path]) -> str:
     """
     # URL: true async download via global HTTP_MGR (rate-limited, cached)
     if isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
-        async with async_http_client() as client:
+        # Use longer timeout for SGML files - they're large and may queue behind rate limiter
+        # With many concurrent requests, connections can wait in queue for significant time
+        timeout = httpx.Timeout(300.0, connect=180.0)  # 180s connect, 300s total (5 min)
+        async with async_http_client(timeout=timeout) as client:
             return await download_file_async(client, source, as_text=True)
 
     # Local file path: keep event loop non-blocking with asyncio.to_thread

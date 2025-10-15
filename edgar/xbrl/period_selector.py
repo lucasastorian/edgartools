@@ -374,12 +374,14 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
     periods_with_data = []
     quarterly_periods_with_data = []
     ytd_periods_with_data = []
+    period_fact_counts = {}  # Track fact counts for each period
 
     for period_key, period_label in candidate_periods:
         try:
             # Check total fact count for this period
             period_facts = xbrl.facts.query().by_period_key(period_key).to_dataframe()
             fact_count = len(period_facts)
+            period_fact_counts[(period_key, period_label)] = fact_count
 
             if fact_count < MIN_FACTS_THRESHOLD:
                 logger.debug("Period %s has insufficient facts (%d < %d)", period_label, fact_count, MIN_FACTS_THRESHOLD)
@@ -423,6 +425,28 @@ def _filter_periods_with_sufficient_data(xbrl, candidate_periods: List[Tuple[str
             logger.debug("Error checking data for period %s: %s", period_label, e)
             # If we can't check, include it to be safe
             periods_with_data.append((period_key, period_label))
+
+    # Filter out sparse periods - periods with significantly fewer facts than the richest period
+    # This removes comparison periods that only have a few facts but not a complete statement
+    if periods_with_data and period_fact_counts:
+        max_fact_count = max(period_fact_counts.values())
+        SPARSE_THRESHOLD = 0.5  # Period must have at least 50% of the facts in the richest period
+
+        filtered_periods = []
+        for period_key, period_label in periods_with_data:
+            period_count = period_fact_counts.get((period_key, period_label), 0)
+            if period_count >= max_fact_count * SPARSE_THRESHOLD:
+                filtered_periods.append((period_key, period_label))
+            else:
+                logger.debug("Filtering out sparse period %s: %d facts (%.1f%% of max %d)",
+                           period_label, period_count, 100 * period_count / max_fact_count, max_fact_count)
+
+        if filtered_periods:
+            periods_with_data = filtered_periods
+            # Also filter the quarterly/ytd lists
+            filtered_set = set(filtered_periods)
+            quarterly_periods_with_data = [p for p in quarterly_periods_with_data if p in filtered_set]
+            ytd_periods_with_data = [p for p in ytd_periods_with_data if p in filtered_set]
 
     # For quarterly filings: prefer quarterly periods, but allow YTD fallback
     # This handles cases like cash flow statements that only report YTD

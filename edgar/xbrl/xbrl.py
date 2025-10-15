@@ -762,19 +762,25 @@ class XBRL:
 
         # Second, for instant-only concepts, map instant facts to duration periods
         # by finding any duration periods that end on the instant date
+        # IMPORTANT: Only check duration periods for THIS concept (facts_by_period.keys())
+        # not all duration periods in the XBRL instance, otherwise balance sheet instant
+        # facts get merged into unrelated cash flow duration periods
+        # Track which instant periods were successfully merged
+        merged_instant_periods = set()
+
         instant_periods = [k for k in facts_by_period.keys() if k.startswith('instant_')]
         for instant_key in instant_periods:
             # Extract date from instant key: "instant_2025-07-27" -> "2025-07-27"
             instant_date = instant_key.replace('instant_', '')
 
-            # Look for any period (even from other facts) that ends on this date
-            for period_key_str in self.context_period_map.values():
-                if period_key_str.startswith('duration_') and period_key_str.endswith(f"_{instant_date}"):
-                    # Create duration entry if it doesn't exist
-                    if period_key_str not in facts_by_period:
-                        facts_by_period[period_key_str] = []
+            # Look for duration periods FOR THIS CONCEPT that end on this date
+            for duration_key in facts_by_period.keys():
+                if duration_key.startswith('duration_') and duration_key.endswith(f"_{instant_date}"):
                     # Add instant facts to this duration period
-                    facts_by_period[period_key_str].extend(facts_by_period[instant_key])
+                    facts_by_period[duration_key].extend(facts_by_period[instant_key])
+                    # Mark this instant period as merged
+                    merged_instant_periods.add(instant_key)
+                    break  # Only merge into one duration period
 
         # should_display_dimensions is now passed as a parameter from the calling method
 
@@ -783,8 +789,9 @@ class XBRL:
         dimensioned_facts = defaultdict(list)  # For dimensioned statement types
 
         for period_key, period_facts in facts_by_period.items():
-            # Skip instant periods - they were already merged into duration periods above
-            if period_key.startswith('instant_'):
+            # Skip instant periods ONLY if they were merged into duration periods
+            # (balance sheet items have only instant periods and should NOT be skipped)
+            if period_key.startswith('instant_') and period_key in merged_instant_periods:
                 continue
             if should_display_dimensions:
                 # For statements that should display dimensions, group facts by dimension
