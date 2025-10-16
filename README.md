@@ -1,23 +1,27 @@
 <p align="center">
-<a href="https://github.com/dgunning/edgartools">
+<a href="https://github.com/lucasastorian/edgartools">
     <img src="docs/images/edgartools-logo.png" alt="EdgarTools Python SEC EDGAR library logo" height="80">
 </a>
 </p>
 
-<h3 align="center">Python Library for SEC EDGAR Data Extraction and Analysis</h3>
+<h3 align="center">Async-Enabled Python Library for SEC EDGAR Data Extraction</h3>
 
 <p align="center">
-  <a href="https://pypi.org/project/edgartools"><img src="https://img.shields.io/pypi/v/edgartools.svg" alt="PyPI - Version"></a>
-  <a href="https://github.com/dgunning/edgartools/actions"><img src="https://img.shields.io/github/actions/workflow/status/dgunning/edgartools/python-hatch-workflow.yml" alt="GitHub Workflow Status"></a>
-  <a href="https://www.codefactor.io/repository/github/dgunning/edgartools"><img src="https://www.codefactor.io/repository/github/dgunning/edgartools/badge" alt="CodeFactor"></a>
+  <a href="https://pypi.org/project/edgartools-async"><img src="https://img.shields.io/pypi/v/edgartools-async.svg" alt="PyPI - Version"></a>
   <a href="https://github.com/pypa/hatch"><img src="https://img.shields.io/badge/%F0%9F%A5%9A-Hatch-4051b5.svg" alt="Hatch project"></a>
-  <a href="https://github.com/dgunning/edgartools/blob/main/LICENSE"><img src="https://img.shields.io/github/license/dgunning/edgartools" alt="GitHub"></a>
-  <a href="https://pypi.org/project/edgartools"><img src="https://img.shields.io/pypi/dm/edgartools" alt="PyPI - Downloads"></a>
+  <a href="https://github.com/lucasastorian/edgartools/blob/main/LICENSE"><img src="https://img.shields.io/github/license/lucasastorian/edgartools" alt="GitHub"></a>
 </p>
 
 <p align="center">
-  <b>Extract financial data from SEC EDGAR filings in 3 lines of Python code instead of 100+. Access company financials, insider trades, fund holdings, and XBRL data with an intuitive API designed for financial analysis.</b>
+  <b>Async fork of edgartools with enhanced XBRL support for non-US GAAP statements (IFRS, etc.). Extract financial data without blocking your event loop - perfect for high-throughput financial data pipelines.</b>
 </p>
+
+> **⭐ ALL CREDIT GOES TO [EDGARTOOLS](https://github.com/dgunning/edgartools) ⭐**
+> This is a temporary fork created solely to add async support for immediate production needs. **ALL** the heavy lifting, design, and core functionality is from the brilliant work of [Dwight Gunning](https://github.com/dgunning) and the edgartools community.
+>
+> **Use the original [edgartools](https://github.com/dgunning/edgartools) for production** - it's actively maintained, has extensive documentation, and a strong community. This fork exists only to add async APIs until they're merged upstream.
+>
+> If you find this useful, please ⭐ star and support the original project: https://github.com/dgunning/edgartools</p>
 
 ![EdgarTools SEC filing data extraction demo](docs/images/edgartools-demo.gif)
 
@@ -66,6 +70,61 @@ ownership = insider_filing.obj()
 
 ![Apple SEC Form 4 insider transaction data extraction with Python](docs/images/aapl-insider.png)
 
+## ⚡ Async API (New in edgartools-async)
+
+Perfect for high-throughput pipelines and concurrent processing:
+
+```python
+import asyncio
+from edgar import get_company_async, set_identity
+
+async def main():
+    # Set identity BEFORE async operations
+    set_identity("your.name@example.com")
+
+    # Load company data without blocking event loop
+    company = await get_company_async("AAPL", user_agent="your.name@example.com")
+
+    # Load SGML data asynchronously
+    filings = company.get_filings(form="10-K")
+    sgml = await filings[0].sgml_async()
+
+    # Batch load multiple filings concurrently
+    from edgar._filings import load_sgmls_concurrently
+    filings_list = list(company.get_filings(form="10-Q"))[:10]
+    sgmls = await load_sgmls_concurrently(filings_list, max_in_flight=32)
+    print(f"Loaded {len(sgmls)} filings concurrently!")
+
+asyncio.run(main())
+```
+
+### Key Async Features:
+- **`get_company_async()`**: Non-blocking company instantiation
+- **`filing.sgml_async()`**: Async SGML file loading
+- **`load_sgmls_concurrently()`**: Batch concurrent loading with rate limiting
+- **Thread-safe identity management**: No stdin blocking in async contexts
+
+## 🌍 Enhanced Non-US GAAP Support (New in edgartools-async)
+
+Improved handling of international financial statements (IFRS, etc.):
+
+### Key Enhancements:
+- **IFRS taxonomy support**: Better detection and parsing of IFRS statements
+- **Quarterly vs YTD fallback**: Intelligently selects best available periods (prefers 3-month, falls back to YTD for cash flow)
+- **Sparse period filtering**: Removes comparison periods with incomplete data
+- **Improved concept matching**: Better revenue/income detection across taxonomies
+- **Abstract element inference**: Automatically identifies abstract/header rows
+- **Revenue deduplication**: Smarter handling of dimensional breakdowns vs parent totals
+
+### Example: Foreign Filer with IFRS
+```python
+from edgar import Company
+
+# Works seamlessly with non-US GAAP filers
+company = Company("SAP")  # German company using IFRS
+financials = company.income_statement(periods=4, annual=True)
+# Automatically detects and parses IFRS taxonomy
+```
 
 ## SEC Filing Analysis: Real-World Solutions
 

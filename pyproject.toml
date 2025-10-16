@@ -3,14 +3,18 @@ requires = ["hatchling>=1.26.3"]
 build-backend = "hatchling.build"
 
 [project]
-name = "edgartools"
-description = 'Navigate Edgar filings with ease'
+name = "edgartools-async"
+description = 'Async-enabled fork of edgartools with enhanced XBRL support for non-US GAAP financial statements'
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-keywords = ["sec", "edgar", "filings", "company", "python", "finance", "financial", "reports"]
+keywords = ["sec", "edgar", "filings", "company", "python", "finance", "financial", "reports", "async", "asyncio", "xbrl", "ifrs", "non-us-gaap"]
 authors = [
   { name = "Dwight Gunning", email = "dgunning@gmail.com" },
+  { name = "Lucas Astorian", email = "lucas@intellifin.ai" },
+]
+maintainers = [
+  { name = "Lucas Astorian", email = "lucas@intellifin.ai" },
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -59,8 +63,9 @@ ai-dev = [
 
 [project.urls]
 Documentation = "https://dgunning.github.io/edgartools/"
-Issues = "https://github.com/dgunning/edgartools/issues"
-Source = "https://github.com/dgunning/edgartools"
+Issues = "https://github.com/lucasastorian/edgartools/issues"
+Source = "https://github.com/lucasastorian/edgartools"
+"Original Source" = "https://github.com/dgunning/edgartools"
 
 [tool.hatch.version]
 path = "edgar/__about__.py"
