@@ -4,9 +4,8 @@ from pathlib import Path
 from typing import AsyncGenerator, Generator, Optional
 
 import httpx
-from httpxthrottlecache import HttpxThrottleCache
 
-from edgar.core import get_identity_if_set, strtobool
+from edgar.core import get_identity, strtobool, log
 
 from .core import edgar_data_dir
 
@@ -51,7 +50,7 @@ def get_edgar_verify_ssl():
         return True
 
 
-def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9) -> HttpxThrottleCache:
+def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
     if cache_enabled:
         cache_dir = get_cache_directory()
         cache_mode = "Hishel-File"
@@ -59,13 +58,57 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9) -> 
         cache_dir = None
         cache_mode = "Disabled"
 
-    http_mgr = HttpxThrottleCache(
-        # Use a non-interactive identity factory so background threads never block
-        user_agent_factory=get_identity_if_set, cache_dir=cache_dir, cache_mode=cache_mode, request_per_sec_limit=request_per_sec_limit,
-        cache_rules = CACHE_RULES
-    )
-    http_mgr.httpx_params["verify"] = get_edgar_verify_ssl
-    return http_mgr
+    # Try throttle/cache manager lazily; fall back to simple manager on failure
+    try:
+        from httpxthrottlecache import HttpxThrottleCache  # lazy import
+        http_mgr = HttpxThrottleCache(
+            user_agent_factory=get_identity,
+            cache_dir=cache_dir,
+            cache_mode=cache_mode,
+            request_per_sec_limit=request_per_sec_limit,
+            cache_rules=CACHE_RULES,
+        )
+        http_mgr.httpx_params["verify"] = get_edgar_verify_ssl
+        return http_mgr
+    except Exception as e:
+        log.warning("Failed to initialize httpxthrottlecache (%s). Falling back to SimpleHTTPManager.", e)
+
+        class SimpleHTTPManager:
+            def __init__(self):
+                self.httpx_params = {"verify": get_edgar_verify_ssl}
+
+            def _populate_user_agent(self, params: dict) -> dict:
+                headers = params.get("headers", {}) or {}
+                try:
+                    ua = get_identity()
+                except Exception:
+                    ua = None
+                if ua:
+                    headers["User-Agent"] = ua
+                params["headers"] = headers
+                return params
+
+            @asynccontextmanager
+            async def async_http_client(self, client: Optional[httpx.AsyncClient] = None, **kwargs):
+                params = self._populate_user_agent(self.httpx_params.copy())
+                params.update(kwargs)
+                if client is None:
+                    async with httpx.AsyncClient(**params) as c:
+                        yield c
+                else:
+                    yield client
+
+            @contextmanager
+            def http_client(self, **kwargs):
+                params = self._populate_user_agent(self.httpx_params.copy())
+                params.update(kwargs)
+                with httpx.Client(**params) as c:
+                    yield c
+
+            def close(self):
+                pass
+
+        return SimpleHTTPManager()
 
 
 @asynccontextmanager

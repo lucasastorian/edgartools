@@ -19,6 +19,10 @@ from tqdm import tqdm
 
 from edgar.core import get_edgar_data_directory, text_extensions
 from edgar.httpclient import async_http_client, http_client
+try:
+    from edgar.httpclient import ASYNC_BUCKET
+except Exception:
+    ASYNC_BUCKET = None
 
 """
 This module provides functions to handle HTTP requests with retry logic, throttling, and identity management.
@@ -39,6 +43,8 @@ __all__ = [
     "download_bulk_data",
     "download_datafile",
 ]
+
+ 
 
 attempts = 6
 
@@ -373,6 +379,8 @@ def download_file(url: str, as_text: bool = None, path: Optional[Union[str, Path
         # Set the default based on the file extension
         as_text = url.endswith(text_extensions)
 
+    if DEBUG_HTTP:
+        _dbg_http(f"download_file: fetching url={url} as_text={as_text}")
     response = get_with_retry(url=url)
     inspect_response(response)
 
@@ -577,6 +585,8 @@ def download_json(data_url: str) -> dict:
     Returns:
         dict: The parsed JSON data.
     """
+    if DEBUG_HTTP:
+        _dbg_http(f"download_json: url={data_url}")
     content = download_file(data_url, as_text=True)
     return json.loads(content)
 

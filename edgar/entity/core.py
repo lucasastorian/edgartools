@@ -250,6 +250,49 @@ class Entity(SecFiler):
             trigger_full_load=trigger_full_load
         )
 
+    async def get_filings_async(self,
+                                *,
+                                year: Union[int, List[int]] = None,
+                                quarter: Union[int, List[int]] = None,
+                                form: Union[str, 'FormType', List[Union[str, 'FormType']]] = None,
+                                accession_number: Union[str, List] = None,
+                                file_number: Union[str, List] = None,
+                                filing_date: Union[str, Tuple[str, str]] = None,
+                                date: Union[str, Tuple[str, str]] = None,
+                                amendments: bool = True,
+                                is_xbrl: bool = None,
+                                is_inline_xbrl: bool = None,
+                                sort_by: Union[str, List[Tuple[str, str]]] = None) -> 'EntityFilings':
+        """
+        Async version of get_filings that avoids synchronous network calls.
+
+        This will expand older filings using the async HTTP client, then return
+        the filtered filings without triggering any synchronous full-load.
+
+        Args are the same as get_filings, except trigger_full_load is omitted
+        and handled internally via the async preload.
+        """
+        # Import locally to avoid circular imports
+        from edgar.async_api import load_full_filings_async
+
+        # Ensure all filings are loaded using async HTTP (non-blocking)
+        await load_full_filings_async(self)
+
+        # Return filtered filings without triggering sync I/O
+        return self.get_filings(
+            year=year,
+            quarter=quarter,
+            form=form,
+            accession_number=accession_number,
+            file_number=file_number,
+            filing_date=filing_date or date,
+            amendments=amendments,
+            is_xbrl=is_xbrl,
+            is_inline_xbrl=is_inline_xbrl,
+            sort_by=sort_by,
+            trigger_full_load=False
+        )
+
     def get_facts(self, period_type: Optional[Union[str, 'PeriodType']] = None) -> Optional[EntityFacts]:
         """
         Get structured facts about this entity.
@@ -806,5 +849,3 @@ def public_companies() -> Iterable[Company]:
     for _, row in df.iterrows():
         c = Company(row.cik)
         yield c
-
-
