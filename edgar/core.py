@@ -53,6 +53,7 @@ __all__ = [
     'IntString',
     'sec_dot_gov',
     'get_identity',
+    'get_identity_if_set',
     'python_version',
     'set_identity',
     'strtobool',
@@ -247,6 +248,16 @@ def get_identity() -> str:
         identity = ask_for_identity()
         os.environ[edgar_identity] = identity
     return identity
+
+
+def get_identity_if_set() -> Optional[str]:
+    """
+    Return EDGAR identity from the environment without prompting.
+
+    This is safe for background threads and async contexts where stdin
+    may block. Returns None if identity is not set.
+    """
+    return os.environ.get(edgar_identity)
 
 def decode_content(content: bytes):
     try:

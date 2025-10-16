@@ -182,6 +182,7 @@ async def get_with_retry_async(client: AsyncClient, url, identity=None, identity
     Raises:
         TooManyRequestsError: If the response status code is 429 (Too Many Requests).
     """
+    kwargs.setdefault("timeout", TIMEOUT)
     response = await client.get(url, **kwargs)
     if response.status_code == 429:
         raise TooManyRequestsError(url)
@@ -294,6 +295,7 @@ async def post_with_retry_async(client: AsyncClient, url, data=None, json=None, 
     Raises:
         TooManyRequestsError: If the response status code is 429 (Too Many Requests).
     """
+    kwargs.setdefault("timeout", TIMEOUT)
     response = await client.post(url, data=data, json=json, **kwargs)
     if response.status_code == 429:
         raise TooManyRequestsError(url)

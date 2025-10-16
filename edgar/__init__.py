@@ -7,6 +7,7 @@ from typing import List, Optional, Union
 
 from edgar._filings import Attachment, Attachments, Filing, FilingHeader, FilingHomepage, Filings, get_by_accession_number, get_by_accession_number_enriched, get_filings
 from edgar.core import CAUTION, CRAWL, NORMAL, edgar_mode, get_identity, listify, set_identity
+from edgar.async_api import get_company_async
 from edgar.current_filings import CurrentFilings, get_all_current_filings, get_current_filings, iter_current_filings_pages
 from edgar.entity import (
     Company,

@@ -6,7 +6,7 @@ from typing import AsyncGenerator, Generator, Optional
 import httpx
 from httpxthrottlecache import HttpxThrottleCache
 
-from edgar.core import get_identity, strtobool
+from edgar.core import get_identity_if_set, strtobool
 
 from .core import edgar_data_dir
 
@@ -60,7 +60,8 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9) -> 
         cache_mode = "Disabled"
 
     http_mgr = HttpxThrottleCache(
-        user_agent_factory=get_identity, cache_dir=cache_dir, cache_mode=cache_mode, request_per_sec_limit=request_per_sec_limit,
+        # Use a non-interactive identity factory so background threads never block
+        user_agent_factory=get_identity_if_set, cache_dir=cache_dir, cache_mode=cache_mode, request_per_sec_limit=request_per_sec_limit,
         cache_rules = CACHE_RULES
     )
     http_mgr.httpx_params["verify"] = get_edgar_verify_ssl
