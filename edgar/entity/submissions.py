@@ -158,8 +158,9 @@ def create_entity_from_submissions_json(
     entity._data = entity_data
     entity._data._not_found = False
 
-    # Mark the entity as having already loaded all filings to prevent fetching more
-    entity._data._loaded_all_filings = True
+    # Only mark as fully loaded if there are NO older filing files to fetch
+    # If there are older files, they need to be loaded separately via load_full_filings_async()
+    entity._data._loaded_all_filings = not bool(entity_data._files)
 
     return entity
 
