@@ -379,8 +379,7 @@ def download_file(url: str, as_text: bool = None, path: Optional[Union[str, Path
         # Set the default based on the file extension
         as_text = url.endswith(text_extensions)
 
-    if DEBUG_HTTP:
-        _dbg_http(f"download_file: fetching url={url} as_text={as_text}")
+    # Removed HTTP debug logging
     response = get_with_retry(url=url)
     inspect_response(response)
 
@@ -585,8 +584,7 @@ def download_json(data_url: str) -> dict:
     Returns:
         dict: The parsed JSON data.
     """
-    if DEBUG_HTTP:
-        _dbg_http(f"download_json: url={data_url}")
+    # Removed HTTP debug logging
     content = download_file(data_url, as_text=True)
     return json.loads(content)
 
