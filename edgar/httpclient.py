@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -8,6 +9,10 @@ import httpx
 from edgar.core import get_identity, strtobool, log
 
 from .core import edgar_data_dir
+
+# Suppress annoying pyrate_limiter warnings about sync buckets in async context
+# This is a cosmetic issue in httpxthrottlecache 0.2.1 - rate limiting still works
+logging.getLogger("pyrate_limiter.limiter").setLevel(logging.ERROR)
 
 MAX_SUBMISSIONS_AGE_SECONDS = 10 * 60  # Check for submissions every 10 minutes
 MAX_INDEX_AGE_SECONDS = 30 * 60  # Check for updates to index (ie: daily-index) every 30 minutes
