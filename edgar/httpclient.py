@@ -68,14 +68,14 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
             request_per_sec_limit=request_per_sec_limit,
             cache_rules=CACHE_RULES,
         )
-        http_mgr.httpx_params["verify"] = get_edgar_verify_ssl
+        http_mgr.httpx_params["verify"] = get_edgar_verify_ssl()
         return http_mgr
     except Exception as e:
         log.warning("Failed to initialize httpxthrottlecache (%s). Falling back to SimpleHTTPManager.", e)
 
         class SimpleHTTPManager:
             def __init__(self):
-                self.httpx_params = {"verify": get_edgar_verify_ssl}
+                self.httpx_params = {"verify": get_edgar_verify_ssl()}
 
             def _populate_user_agent(self, params: dict) -> dict:
                 headers = params.get("headers", {}) or {}
