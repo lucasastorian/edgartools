@@ -1,6 +1,10 @@
 import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
+import time
+import asyncio
+from collections import deque
+import threading
 from pathlib import Path
 from typing import AsyncGenerator, Generator, Optional
 
@@ -55,7 +59,49 @@ def get_edgar_verify_ssl():
         return True
 
 
+_REQUESTS_PER_SEC = 9
+
+
+class AsyncRateLimiter:
+    """Simple, process-wide async sliding-window rate limiter.
+
+    Guarantees at most `rate` requests per second across all async callers.
+    """
+
+    def __init__(self, rate: int):
+        self.rate = max(1, int(rate))
+        self._timestamps = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        window = 1.0
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                while self._timestamps and (now - self._timestamps[0]) > window:
+                    self._timestamps.popleft()
+                if len(self._timestamps) < self.rate:
+                    self._timestamps.append(now)
+                    return
+                # Need to wait until the oldest slot expires
+                sleep_for = max(0.0, window - (now - self._timestamps[0]))
+            # Sleep outside the lock
+            await asyncio.sleep(sleep_for if sleep_for > 0 else 0)
+
+
+_ASYNC_GLOBAL_LIMITER: Optional[AsyncRateLimiter] = None
+
+
+def _get_async_limiter(rate: int) -> AsyncRateLimiter:
+    global _ASYNC_GLOBAL_LIMITER
+    if _ASYNC_GLOBAL_LIMITER is None or _ASYNC_GLOBAL_LIMITER.rate != max(1, int(rate)):
+        _ASYNC_GLOBAL_LIMITER = AsyncRateLimiter(rate)
+    return _ASYNC_GLOBAL_LIMITER
+
+
 def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
+    global _REQUESTS_PER_SEC
+    _REQUESTS_PER_SEC = int(request_per_sec_limit)
     if cache_enabled:
         cache_dir = get_cache_directory()
         cache_mode = "Hishel-File"
@@ -79,8 +125,53 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
         log.warning("Failed to initialize httpxthrottlecache (%s). Falling back to SimpleHTTPManager.", e)
 
         class SimpleHTTPManager:
+            """
+            Lightweight HTTP manager used when httpxthrottlecache is not available.
+            Adds a simple global rate limiter to both sync and async clients via httpx event hooks
+            so that SEC rate limits are still respected.
+            """
+
+            _lock = None           # asyncio lock for async limiter
+            _timestamps = None     # shared timestamps deque
+            _tlock = None          # threading lock for sync limiter
+
             def __init__(self):
                 self.httpx_params = {"verify": get_edgar_verify_ssl()}
+                # Shared limiter state (process-wide) for both sync/async
+                if SimpleHTTPManager._lock is None:
+                    SimpleHTTPManager._lock = asyncio.Lock()
+                if SimpleHTTPManager._timestamps is None:
+                    SimpleHTTPManager._timestamps = deque()
+                if SimpleHTTPManager._tlock is None:
+                    SimpleHTTPManager._tlock = threading.Lock()
+                self._rate = max(1, int(request_per_sec_limit))
+
+            # ---- Simple sliding window limiter (shared for sync/async) ----
+            def _acquire_sync(self):
+                window = 1.0
+                while True:
+                    with SimpleHTTPManager._tlock:
+                        now = time.monotonic()
+                        while SimpleHTTPManager._timestamps and (now - SimpleHTTPManager._timestamps[0]) > window:
+                            SimpleHTTPManager._timestamps.popleft()
+                        if len(SimpleHTTPManager._timestamps) < self._rate:
+                            SimpleHTTPManager._timestamps.append(now)
+                            return
+                        sleep_for = max(0.0, window - (now - SimpleHTTPManager._timestamps[0]))
+                    time.sleep(sleep_for if sleep_for > 0 else 0)
+
+            async def _acquire_async(self):
+                window = 1.0
+                while True:
+                    async with SimpleHTTPManager._lock:
+                        now = time.monotonic()
+                        while SimpleHTTPManager._timestamps and (now - SimpleHTTPManager._timestamps[0]) > window:
+                            SimpleHTTPManager._timestamps.popleft()
+                        if len(SimpleHTTPManager._timestamps) < self._rate:
+                            SimpleHTTPManager._timestamps.append(now)
+                            return
+                        sleep_for = max(0.0, window - (now - SimpleHTTPManager._timestamps[0]))
+                    await asyncio.sleep(sleep_for if sleep_for > 0 else 0)
 
             def _populate_user_agent(self, params: dict) -> dict:
                 headers = params.get("headers", {}) or {}
@@ -98,6 +189,12 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
                 params = self._populate_user_agent(self.httpx_params.copy())
                 params.update(kwargs)
                 if client is None:
+                    # Attach async hook to enforce rate limiting per request
+                    async def _hook(request):
+                        await self._acquire_async()
+                    hooks = params.get("event_hooks", {}) or {}
+                    hooks.setdefault("request", []).append(_hook)
+                    params["event_hooks"] = hooks
                     async with httpx.AsyncClient(**params) as c:
                         yield c
                 else:
@@ -107,6 +204,12 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
             def http_client(self, **kwargs):
                 params = self._populate_user_agent(self.httpx_params.copy())
                 params.update(kwargs)
+                # Attach sync hook to enforce rate limiting per request
+                def _hook(request):
+                    self._acquire_sync()
+                hooks = params.get("event_hooks", {}) or {}
+                hooks.setdefault("request", []).append(_hook)
+                params["event_hooks"] = hooks
                 with httpx.Client(**params) as c:
                     yield c
 
@@ -118,6 +221,27 @@ def get_http_mgr(cache_enabled: bool = True, request_per_sec_limit: int = 9):
 
 @asynccontextmanager
 async def async_http_client(client: Optional[httpx.AsyncClient] = None, **kwargs) -> AsyncGenerator[httpx.AsyncClient, None]:
+    # Optional escape hatch to avoid double limiting when relying solely on httpxthrottlecache
+    disable_wrapper = str(os.getenv("EDGAR_DISABLE_ASYNC_WRAPPER_LIMITER", "0")).lower() in {"1", "true", "yes", "on"}
+
+    if not disable_wrapper:
+        async def _rl_hook(request):
+            limiter = _get_async_limiter(_REQUESTS_PER_SEC)
+            await limiter.acquire()
+
+        if client is None:
+            # Attach hook via constructor kwargs
+            hooks = kwargs.get("event_hooks", {}) or {}
+            hooks.setdefault("request", []).append(_rl_hook)
+            kwargs["event_hooks"] = hooks
+        else:
+            # Attach idempotently to a provided client
+            if not getattr(client, "_edgar_async_rl_hook_attached", False):
+                hooks = getattr(client, "event_hooks", None)
+                if hooks is not None:
+                    hooks.setdefault("request", []).append(_rl_hook)
+                    setattr(client, "_edgar_async_rl_hook_attached", True)
+
     async with HTTP_MGR.async_http_client(client=client, **kwargs) as client:
         yield client
 

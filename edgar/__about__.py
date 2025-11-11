@@ -2,4 +2,5 @@
 # SPDX-FileCopyrightText: 2025-present Lucas Astorian <lucas@intellifin.ai>
 #
 # SPDX-License-Identifier: MIT
-__version__ = '1.0.8'
+__version__ = '1.0.9'
+
