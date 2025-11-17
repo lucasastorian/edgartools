@@ -78,10 +78,12 @@ class AsyncRateLimiter:
                     self._timestamps.popleft()
                 if len(self._timestamps) < self.rate:
                     self._timestamps.append(now)
+                    log.debug(f"Rate limiter: acquired slot ({len(self._timestamps)}/{self.rate})")
                     return
                 # Need to wait until the oldest slot expires
                 sleep_for = max(0.0, window - (now - self._timestamps[0]))
             # Sleep outside the lock
+            log.debug(f"Rate limiter: sleeping {sleep_for:.3f}s (bucket full)")
             await asyncio.sleep(sleep_for if sleep_for > 0 else 0)
 
 
@@ -224,6 +226,7 @@ async def async_http_client(client: Optional[httpx.AsyncClient] = None, **kwargs
     if not disable_wrapper:
         async def _rl_hook(request):
             limiter = _get_async_limiter(_REQUESTS_PER_SEC)
+            log.debug(f"Async rate limiter hook called for {request.url.host}")
             await limiter.acquire()
 
         if client is None:

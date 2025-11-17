@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Union
 
 import httpcore
+import httpx
 import orjson as json
 from httpx import AsyncClient, ConnectError, HTTPError, ReadTimeout, RequestError, Response, Timeout, TimeoutException
 from stamina import retry
@@ -50,7 +51,7 @@ attempts = 6
 
 max_requests_per_second = 8
 throttle_disabled = False
-TIMEOUT = Timeout(30.0, connect=10.0)
+TIMEOUT = Timeout(30.0, connect=10.0)  # Keep conservative for most requests
 RETRY_WAIT_INITIAL = 1  # Initial retry delay (seconds)
 RETRY_WAIT_MAX = 60  # Max retry delay (seconds)
 
@@ -70,7 +71,13 @@ RETRYABLE_EXCEPTIONS = (
     # HTTPCORE exceptions that can slip through
     httpcore.ReadTimeout, httpcore.WriteTimeout, httpcore.ConnectTimeout, 
     httpcore.PoolTimeout, httpcore.ConnectError, httpcore.NetworkError,
-    httpcore.TimeoutException
+    httpcore.TimeoutException, httpcore.ReadError, httpcore.WriteError,
+    httpcore.LocalProtocolError, httpcore.RemoteProtocolError,
+    # Additional httpx protocol errors
+    httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError, 
+    httpx.LocalProtocolError, httpx.ConnectTimeout,
+    # JSON decode errors from malformed responses
+    json.JSONDecodeError,
 )
 
 

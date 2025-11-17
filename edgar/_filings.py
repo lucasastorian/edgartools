@@ -11,7 +11,7 @@ from functools import cached_property, lru_cache
 from io import BytesIO
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast, Sequence
 
 import httpx
 import numpy as np
@@ -2024,29 +2024,128 @@ def unicode_for_form(form: str) -> str:
     return '📄'
 
 
-async def load_sgmls_concurrently(filings: List[Filing], max_in_flight: int = 32) -> List[FilingSGML]:
+async def load_sgmls_concurrently(
+    filings: List[Filing], 
+    max_in_flight: int = 16,
+    return_exceptions: bool = False,
+    timeout: float = 60.0,
+    max_retries: int = 3
+) -> List[Union[FilingSGML, Exception, None]]:
     """
-    Load SGML data for multiple filings concurrently with async I/O.
+    Load SGML data for multiple filings concurrently with robust error handling.
 
     Uses a semaphore to cap concurrent downloads while the global rate limiter
-    enforces SEC's 9 req/sec limit.
+    enforces SEC's 9 req/sec limit. Handles individual failures gracefully.
 
     Args:
         filings: List of Filing objects to load
-        max_in_flight: Maximum number of concurrent downloads (default 32)
+        max_in_flight: Maximum number of concurrent downloads (default 16, reduced from 32)
                       Higher values increase memory usage (5-20MB per filing)
+        return_exceptions: If True, returns exceptions in list instead of raising
+        timeout: Timeout in seconds for each request (default 60s, increased from 30s)
+        max_retries: Number of retry attempts for failed filings (default 3)
 
     Returns:
-        List of FilingSGML objects in the same order as input filings
+        List of FilingSGML objects or None/Exception for failed items (same order as input)
 
     Example:
         >>> filings = list(get_filings(ticker="AAPL", form="10-K"))[:100]
-        >>> sgmls = await load_sgmls_concurrently(filings, max_in_flight=32)
+        >>> results = await load_sgmls_concurrently(filings, max_in_flight=16, return_exceptions=True)
+        >>> # Filter out failures
+        >>> sgmls = [r for r in results if isinstance(r, FilingSGML)]
+        >>> failures = [r for r in results if isinstance(r, Exception)]
     """
     sem = asyncio.Semaphore(max_in_flight)
+    
+    async def _load_with_retries(filing: Filing, idx: int) -> Tuple[int, Union[FilingSGML, Exception, None]]:
+        """Load a single filing with retries, returning (index, result) for ordering"""
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                # Add retry delay for subsequent attempts (outside semaphore)
+                if attempt > 0:
+                    delay = min(2 ** attempt, 30)  # Exponential backoff, max 30s
+                    await asyncio.sleep(delay)
+                
+                # Only hold semaphore during active work, not during sleep
+                async with sem:
+                    # Apply timeout to the actual download
+                    result = await asyncio.wait_for(filing.sgml_async(), timeout=timeout)
+                    return (idx, result)
+                    
+            except asyncio.TimeoutError as e:
+                last_error = e
+                log.warning(
+                    f"Attempt {attempt + 1}/{max_retries} timed out after {timeout}s for {filing.accession_no}"
+                )
+                    
+            except Exception as e:
+                last_error = e
+                error_type = type(e).__name__
+                log.warning(
+                    f"Attempt {attempt + 1}/{max_retries} failed for {filing.accession_no}: "
+                    f"{error_type}: {str(e)}"
+                )
+                
+                # Don't retry on certain permanent errors
+                if isinstance(e, (ValueError, KeyError, AttributeError)):
+                    break
+                    
+        # All retries failed
+        if return_exceptions:
+            return (idx, last_error)
+        else:
+            return (idx, None)
+    
+    # Execute all loads concurrently with their indices
+    indexed_results = await asyncio.gather(
+        *(_load_with_retries(f, i) for i, f in enumerate(filings)),
+        return_exceptions=True  # Always catch exceptions at gather level
+    )
+    
+    # Filter out any raw BaseExceptions and sort by index to maintain order
+    # asyncio.gather with return_exceptions=True can return BaseException objects
+    filtered_results = [
+        r if isinstance(r, tuple) else (0, r) 
+        for r in indexed_results 
+        if isinstance(r, tuple) or isinstance(r, Exception)
+    ]
+    filtered_results.sort(key=lambda x: x[0])
+    results = [r[1] for r in filtered_results]
+    
+    # Log summary
+    successes = sum(1 for r in results if isinstance(r, FilingSGML))
+    failures = sum(1 for r in results if r is None or isinstance(r, Exception))
+    if failures > 0:
+        log.warning(f"Loaded {successes}/{len(filings)} SGMLs successfully ({failures} failures)")
+    
+    # If not returning exceptions and we have failures, raise an aggregate error
+    if not return_exceptions and failures > 0:
+        failed_accessions = [
+            f.accession_no for f, r in zip(filings, results) 
+            if r is None or isinstance(r, Exception)
+        ]
+        raise RuntimeError(
+            f"Failed to load {failures} filings: {', '.join(failed_accessions[:5])}"
+            + ("..." if len(failed_accessions) > 5 else "")
+        )
+    
+    return results
 
-    async def _load_with_semaphore(filing: Filing) -> FilingSGML:
-        async with sem:
-            return await filing.sgml_async()
 
-    return await asyncio.gather(*(_load_with_semaphore(f) for f in filings))
+async def load_sgmls_concurrently_simple(filings: List[Filing], max_in_flight: int = 32) -> List[FilingSGML]:
+    """
+    Backward-compatible version of load_sgmls_concurrently.
+    
+    Fails fast if any filing fails to load (original behavior).
+    Use load_sgmls_concurrently with return_exceptions=True for partial success.
+    """
+    results = await load_sgmls_concurrently(
+        filings, 
+        max_in_flight=max_in_flight,
+        return_exceptions=False,  # Fail on any error
+        timeout=60.0,  # Reasonable default
+        max_retries=3
+    )
+    # With return_exceptions=False, this will only contain FilingSGML objects
+    return cast(List[FilingSGML], results)
